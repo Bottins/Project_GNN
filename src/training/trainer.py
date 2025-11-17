@@ -18,57 +18,65 @@ import json
 import torch.nn.functional as F
 
 class CVRPLoss(nn.Module):
-    """Loss combinata per CVRP"""
-    
+    """Loss combinata per CVRP con penalità per vincoli del dominio"""
+
     def __init__(self,
                  edge_weight: float = 1.0,
                  node_weight: float = 0.5,
-                 consistency_weight: float = 0.2):
+                 consistency_weight: float = 0.2,
+                 self_loop_penalty: float = 10.0,
+                 node_revisit_penalty: float = 5.0,
+                 capacity_penalty: float = 8.0,
+                 route_validity_penalty: float = 3.0):
         super().__init__()
         self.edge_weight = edge_weight
         self.node_weight = node_weight
         self.consistency_weight = consistency_weight
-        
+        self.self_loop_penalty = self_loop_penalty
+        self.node_revisit_penalty = node_revisit_penalty
+        self.capacity_penalty = capacity_penalty
+        self.route_validity_penalty = route_validity_penalty
+
         self.register_buffer('ema_ratio', torch.tensor(1.0))
         self.ema_beta = 0.9  # più alto = più stabile
         self.pos_weight_min = 5.0
         self.pos_weight_max = 5000.0
 
-        
+
         self.bce_loss = nn.BCEWithLogitsLoss()
         self.mse_loss = nn.MSELoss()
     
     def forward(self, predictions: Dict, data) -> Dict[str, torch.Tensor]:
         """
-        Calcola le loss combinate.
-        
+        Calcola le loss combinate con penalità per vincoli VRP.
+
         Returns:
             Dict con loss totale e componenti
         """
         losses = {}
-        
+
         # Edge loss (classificazione binaria)
         if hasattr(data, 'y_edges'):
             y_true = data.y_edges
             # count pos/neg nel batch
             N_pos = (y_true == 1).sum()
             N_neg = (y_true == 0).sum()
-        
+
             # evita div/zero
             ratio = (N_neg.float() / torch.clamp(N_pos.float(), min=1.0))
-        
+
             # EMA + clamp per stabilità
             self.ema_ratio = self.ema_beta * self.ema_ratio + (1 - self.ema_beta) * ratio.detach()
             ratio_clamped = torch.clamp(self.ema_ratio, min=self.pos_weight_min, max=self.pos_weight_max)
-        
+
             pos_weight = ratio_clamped.to(y_true.device).unsqueeze(0)  # shape [1]
-        
+
             bce_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
             edge_loss = bce_loss_fn(predictions['edge_predictions'], y_true)
-        
+
             losses['edge_loss'] = edge_loss * self.edge_weight
 
-        
+
         # Node sequence loss
         if hasattr(data, 'y_nodes'):
             mask = data.y_nodes >= 0  # Ignora nodi non visitati
@@ -78,7 +86,7 @@ class CVRPLoss(nn.Module):
                     data.y_nodes[mask]
                 )
                 losses['node_loss'] = node_loss * self.node_weight
-        
+
         # Consistency loss (edges e nodes devono essere coerenti)
         if 'edge_predictions' in predictions and 'node_predictions' in predictions:
             consistency_loss = self._consistency_loss(
@@ -87,25 +95,194 @@ class CVRPLoss(nn.Module):
                 data.edge_index
             )
             losses['consistency_loss'] = consistency_loss * self.consistency_weight
-        
+
+        # ===== PENALITÀ PER VINCOLI VRP =====
+
+        # 1. Self-loop penalty: penalizza archi da un nodo a se stesso
+        if 'edge_predictions' in predictions:
+            self_loop_loss = self._self_loop_penalty(
+                predictions['edge_predictions'],
+                data.edge_index
+            )
+            losses['self_loop_loss'] = self_loop_loss * self.self_loop_penalty
+
+        # 2. Node revisit penalty: penalizza visitare lo stesso nodo più volte
+        if 'edge_predictions' in predictions:
+            node_revisit_loss = self._node_revisit_penalty(
+                predictions['edge_predictions'],
+                data.edge_index,
+                data.num_nodes
+            )
+            losses['node_revisit_loss'] = node_revisit_loss * self.node_revisit_penalty
+
+        # 3. Capacity penalty: penalizza percorsi che violano la capacità
+        if 'edge_predictions' in predictions and hasattr(data, 'x'):
+            capacity_loss = self._capacity_penalty(
+                predictions['edge_predictions'],
+                data.edge_index,
+                data.x,
+                data.capacity if hasattr(data, 'capacity') else None
+            )
+            losses['capacity_loss'] = capacity_loss * self.capacity_penalty
+
+        # 4. Route validity penalty: penalizza percorsi non validi
+        if 'edge_predictions' in predictions:
+            route_validity_loss = self._route_validity_penalty(
+                predictions['edge_predictions'],
+                data.edge_index,
+                data.num_nodes
+            )
+            losses['route_validity_loss'] = route_validity_loss * self.route_validity_penalty
+
         # Loss totale
         losses['total_loss'] = sum(losses.values())
-        
+
         return losses
     
     def _consistency_loss(self, edge_preds, node_preds, edge_index):
         """Penalizza incoerenze tra predizioni edges e nodes"""
         edge_probs = torch.sigmoid(edge_preds)
-        
+
         # Nodi con sequence alta dovrebbero avere edges con prob alta
         src_seq = node_preds[edge_index[0]]
         dst_seq = node_preds[edge_index[1]]
-        
+
         # Edges tra nodi consecutivi dovrebbero avere prob alta
         seq_diff = torch.abs(dst_seq - src_seq - 1)
         expected_prob = torch.exp(-seq_diff)
-        
+
         return F.mse_loss(edge_probs, expected_prob)
+
+    def _self_loop_penalty(self, edge_preds, edge_index):
+        """
+        Penalizza fortemente archi self-loop (stesso nodo iniziale e finale).
+        In un VRP, un veicolo non può andare da un nodo a se stesso.
+        """
+        # Identifica self-loops
+        self_loop_mask = edge_index[0] == edge_index[1]
+
+        if self_loop_mask.any():
+            # Penalizza probabilità alta su self-loops
+            self_loop_probs = torch.sigmoid(edge_preds[self_loop_mask])
+            # Vogliamo che queste probabilità siano vicine a 0
+            return torch.mean(self_loop_probs ** 2)
+        else:
+            return torch.tensor(0.0, device=edge_preds.device)
+
+    def _node_revisit_penalty(self, edge_preds, edge_index, num_nodes):
+        """
+        Penalizza quando lo stesso nodo viene raggiunto da più archi con alta probabilità.
+        In un VRP tipico, ogni cliente deve essere visitato esattamente una volta.
+        """
+        edge_probs = torch.sigmoid(edge_preds)
+
+        # Per ogni nodo di destinazione, calcola la somma delle probabilità in ingresso
+        # Escludiamo il depot (nodo 0) che può essere visitato più volte
+        penalty = torch.tensor(0.0, device=edge_preds.device)
+
+        for node in range(1, num_nodes):  # Salta il depot (nodo 0)
+            # Trova tutti gli archi che entrano in questo nodo
+            incoming_mask = edge_index[1] == node
+            if incoming_mask.any():
+                incoming_probs = edge_probs[incoming_mask]
+                # Penalizza se la somma è > 1 (significa che più archi entrano)
+                total_incoming = incoming_probs.sum()
+                # Penalità quadratica per violazioni
+                penalty += F.relu(total_incoming - 1.0) ** 2
+
+        # Normalizza per il numero di nodi
+        return penalty / max(num_nodes - 1, 1)
+
+    def _capacity_penalty(self, edge_preds, edge_index, node_features, capacity):
+        """
+        Penalizza percorsi che violano la capacità del veicolo.
+        Usa le probabilità degli archi per stimare i percorsi e calcolare il carico.
+
+        Args:
+            edge_preds: Predizioni degli archi (logits)
+            edge_index: Indici degli archi [2, num_edges]
+            node_features: Features dei nodi [num_nodes, num_features]
+            capacity: Capacità del veicolo (scalare o None)
+        """
+        if capacity is None:
+            return torch.tensor(0.0, device=edge_preds.device)
+
+        edge_probs = torch.sigmoid(edge_preds)
+
+        # Estrai le domande dai node_features
+        # Assumiamo che la domanda sia nella terza colonna (indice 2)
+        # [x_coord, y_coord, demand, is_depot]
+        demands = node_features[:, 2]  # shape: [num_nodes]
+
+        # Per ogni arco con alta probabilità, calcola la domanda accumulata
+        # Approssimazione: per ogni arco (i,j) con prob alta, il veicolo trasporta demand[j]
+        penalty = torch.tensor(0.0, device=edge_preds.device)
+
+        # Trova depot (nodo 0, con is_depot=1)
+        depot_idx = 0
+
+        # Per ogni possibile percorso, stimiamo il carico
+        # Consideriamo solo archi con probabilità > 0.3
+        high_prob_mask = edge_probs > 0.3
+
+        if high_prob_mask.any():
+            # Raggruppa archi per percorsi che partono dal depot
+            for node in range(1, len(demands)):
+                # Trova il percorso che collega depot -> node -> ... -> depot
+                # Approssimazione: sommiamo le domande dei nodi raggiunti con alta prob
+                outgoing_from_depot = edge_index[0] == depot_idx
+                reaching_node = edge_index[1] == node
+                relevant_edges = outgoing_from_depot | reaching_node
+
+                if relevant_edges.any():
+                    relevant_probs = edge_probs[relevant_edges]
+                    relevant_dests = edge_index[1][relevant_edges]
+
+                    # Stima del carico: somma pesata delle domande
+                    estimated_load = (relevant_probs * demands[relevant_dests]).sum()
+
+                    # Penalizza se supera la capacità
+                    if isinstance(capacity, torch.Tensor):
+                        cap = capacity.item() if capacity.numel() == 1 else capacity[0]
+                    else:
+                        cap = capacity
+
+                    penalty += F.relu(estimated_load - cap) ** 2
+
+        # Normalizza
+        return penalty / max(len(demands) - 1, 1)
+
+    def _route_validity_penalty(self, edge_preds, edge_index, num_nodes):
+        """
+        Penalizza configurazioni di percorsi non valide:
+        - Ogni nodo (eccetto depot) deve avere al massimo un arco in uscita
+        - Ogni nodo (eccetto depot) deve avere al massimo un arco in entrata
+        - Il depot deve avere bilanciamento in/out
+        """
+        edge_probs = torch.sigmoid(edge_preds)
+        penalty = torch.tensor(0.0, device=edge_preds.device)
+
+        # 1. Ogni nodo non-depot deve avere al massimo un arco in uscita con alta prob
+        for node in range(1, num_nodes):  # Salta depot
+            outgoing_mask = edge_index[0] == node
+            if outgoing_mask.any():
+                outgoing_probs = edge_probs[outgoing_mask]
+                total_outgoing = outgoing_probs.sum()
+                # Penalizza se > 1
+                penalty += F.relu(total_outgoing - 1.0) ** 2
+
+        # 2. Bilancia depot: numero di archi in uscita ≈ numero di archi in entrata
+        depot_out_mask = edge_index[0] == 0
+        depot_in_mask = edge_index[1] == 0
+
+        if depot_out_mask.any() and depot_in_mask.any():
+            depot_out_sum = edge_probs[depot_out_mask].sum()
+            depot_in_sum = edge_probs[depot_in_mask].sum()
+
+            # Penalizza differenza (dovrebbero essere uguali)
+            penalty += (depot_out_sum - depot_in_sum) ** 2
+
+        return penalty / max(num_nodes - 1, 1)
 
 
 class CVRPTrainer:
