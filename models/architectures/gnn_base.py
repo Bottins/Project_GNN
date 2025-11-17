@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GATConv, global_mean_pool, global_max_pool
 from torch_geometric.data import Data, Batch
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List
 
 
 class CVRPGNNBase(nn.Module):
@@ -202,41 +202,38 @@ class CVRPDecoder(nn.Module):
             'adj_matrix': adj_matrix
         }
     
-    def _greedy_decode(self, 
+    def _greedy_decode(self,
                       adj_matrix: torch.Tensor,
-                      capacity: Optional[torch.Tensor] = None) -> list[list[int]]:
+                      capacity: Optional[torch.Tensor] = None) -> List[List[int]]:
         """Decodifica greedy delle routes"""
         num_nodes = adj_matrix.shape[0]
         visited = torch.zeros(num_nodes, dtype=torch.bool, device=adj_matrix.device)
         visited[0] = True  # Depot sempre visitato
         
         routes = []
-        print("Start greedy decode")
         while not visited[1:].all():
             route = []
             current = 0  # Parti dal depot
-            
+
             while True:
                 # Trova prossimo nodo non visitato con probabilità più alta
-                
+
                 probs = adj_matrix[current].clone()
                 probs[visited] = 0  # Maschera nodi visitati
-                # print(probs.sum())
                 if probs.sum() == 0:
                     break
-                
+
                 next_node = probs.argmax().item()
-                
+
                 if next_node == 0:  # Tornato al depot
                     break
-                
+
                 route.append(next_node)
                 visited[next_node] = True
                 current = next_node
-                print(f"il current node è: {current}")
+
                 # Check capacità se fornita
                 if capacity is not None and len(route) >= capacity:
-                    print("capacity break")
                     break
             
             if route:
