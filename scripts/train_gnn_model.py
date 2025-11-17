@@ -357,7 +357,7 @@ def main():
         optimizer, mode='min', patience=5, factor=0.5
     )
     
-    loss_fn = CVRPLoss(edge_weight=1.0, node_weight=0.5, consistency_weight=0.2)
+    loss_fn = CVRPLoss(edge_weight=1.0, node_weight=0.5)
     
     # Crea trainer
     trainer = CVRPTrainer(
