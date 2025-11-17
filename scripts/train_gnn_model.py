@@ -357,7 +357,22 @@ def main():
         optimizer, mode='min', patience=5, factor=0.5
     )
     
-    loss_fn = CVRPLoss(edge_weight=1.0, node_weight=0.5, consistency_weight=0.2)
+    # Loss con Focal Loss e penalità VRP (pesi già ottimizzati)
+    loss_fn = CVRPLoss(
+        edge_weight=1.0,
+        node_weight=0.3,
+        # Penalità VRP ridotte per non sopprimere predizioni
+        self_loop_penalty=0.5,
+        node_revisit_penalty=0.3,
+        capacity_penalty=0.8,
+        route_validity_penalty=0.2,
+        # Focal Loss per sbilanciamento
+        use_focal_loss=True,
+        focal_alpha=0.25,
+        focal_gamma=2.0,
+        # Warmup graduale delle penalità
+        penalty_warmup_epochs=20
+    )
     
     # Crea trainer
     trainer = CVRPTrainer(
