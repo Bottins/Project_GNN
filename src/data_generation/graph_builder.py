@@ -37,10 +37,13 @@ class CVRPGraphBuilder:
             add_self_loops: Se True, aggiunge self-loops al grafo
             fully_connected: Se True, crea grafo fully connected
         """
+        # Node features migliorate con info di capacità e distanza
         self.node_features = node_features or [
-            'x_coord', 'y_coord', 'demand', 'is_depot'
+            'x_coord', 'y_coord', 'demand', 'is_depot',
+            'demand_capacity_ratio', 'distance_to_depot'
         ]
-        self.edge_features = edge_features or ['distance']
+        # Edge features migliorate con info di capacità
+        self.edge_features = edge_features or ['distance', 'capacity_feasible']
         self.normalize = normalize
         self.add_self_loops = add_self_loops
         self.fully_connected = fully_connected
