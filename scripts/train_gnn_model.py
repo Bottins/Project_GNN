@@ -357,6 +357,7 @@ def main():
         optimizer, mode='min', patience=5, factor=0.5
     )
     
+<<<<<<< HEAD
     # Loss con Focal Loss e penalità VRP (pesi già ottimizzati)
     loss_fn = CVRPLoss(
         edge_weight=1.0,
@@ -373,6 +374,35 @@ def main():
         # Warmup graduale delle penalità
         penalty_warmup_epochs=20
     )
+=======
+    # Loss COMPLETAMENTE RIPROGETTATA: Tour-Based invece di Edge-Based
+    # Focus: Formare PERCORSI VALIDI, non classificare archi indipendenti
+    loss_fn = CVRPLoss(
+        # Pesi principali: TOUR-BASED LOSSES (alte)
+        coverage_weight=5.0,          # CRITICA: ogni nodo raggiunto esattamente 1 volta
+        tour_formation_weight=3.0,    # ALTA: flow conservation (cicli)
+        depot_balance_weight=2.0,     # Bilancia in/out depot
+        capacity_tours_weight=1.5,    # Numero tours ≈ ceil(demand/capacity)
+
+        # Peso similarity: MOLTO RIDOTTO (solo guida, non dominare)
+        similarity_weight=0.3,        # BASSA: guida verso GT ma non sopprime
+
+        # Node sequence loss (opzionale, peso molto basso)
+        node_weight=0.1,
+
+        # Focal Loss per similarity
+        use_focal_loss=True,
+        focal_alpha=0.25,
+        focal_gamma=2.0
+    )
+
+    print("\n🎯 Loss Function: TOUR-BASED CVRP Loss")
+    print("   - Coverage weight: 5.0 (ogni nodo visitato 1 volta)")
+    print("   - Tour formation weight: 3.0 (flow conservation)")
+    print("   - Depot balance weight: 2.0")
+    print("   - Capacity tours weight: 1.5")
+    print("   - Similarity weight: 0.3 (guida debole)")
+>>>>>>> da9e947741d8d0bc14e1cfcdba3ee165a3296d8f
     
     # Crea trainer
     trainer = CVRPTrainer(

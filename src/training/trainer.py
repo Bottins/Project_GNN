@@ -248,7 +248,13 @@ class CVRPLoss(nn.Module):
         Versione migliorata della capacity penalty.
         Penalizza quando la somma delle domande lungo archi con alta probabilità supera la capacità.
 
+<<<<<<< HEAD
         Approccio semplificato e vettorizzato per gestire batch correttamente.
+=======
+        Strategia:
+        - Per ogni arco dal depot, calcola il carico cumulativo pesato dalle probabilità
+        - Penalizza quando supera la capacità
+>>>>>>> da9e947741d8d0bc14e1cfcdba3ee165a3296d8f
         """
         if capacity is None:
             return torch.tensor(0.0, device=edge_preds.device)
@@ -258,6 +264,7 @@ class CVRPLoss(nn.Module):
         # Estrai demands (assumendo indice 2 in node_features)
         demands = node_features[:, 2]
 
+<<<<<<< HEAD
         # Per ogni arco, calcola una stima del "peso" trasportato
         # Peso = probabilità dell'arco * demand del nodo di destinazione
         src_nodes = edge_index[0]
@@ -304,6 +311,59 @@ class CVRPLoss(nn.Module):
             # Normalizza per numero di clienti
             if len(unique_customers) > 0:
                 penalty = penalty / len(unique_customers)
+=======
+        # Converti capacity in tensor
+        if isinstance(capacity, torch.Tensor):
+            cap = capacity.float()
+        else:
+            cap = torch.tensor(capacity, dtype=torch.float32, device=edge_preds.device)
+
+        penalty = torch.tensor(0.0, device=edge_preds.device)
+
+        # Per ogni arco, calcola la domanda del nodo di destinazione pesata dalla probabilità
+        # e penalizza se la somma delle domande "attive" supera la capacità
+        src_nodes = edge_index[0]
+        dst_nodes = edge_index[1]
+
+        # Trova archi che partono dal depot (nodo 0)
+        depot_mask = src_nodes == 0
+
+        if depot_mask.any():
+            # Per ogni route dal depot, stimiamo il carico
+            depot_edges = depot_mask.nonzero(as_tuple=True)[0]
+
+            for edge_idx in depot_edges:
+                first_customer = dst_nodes[edge_idx]
+                if first_customer == 0:  # Skip self-loop to depot
+                    continue
+
+                # Stima il carico totale della route partendo da questo arco
+                # Approssimazione: somma pesata delle domande dei nodi raggiungibili
+                prob = edge_probs[edge_idx]
+
+                # Calcola carico stimato come probabilità * demand del nodo raggiunto
+                # Più soft: usiamo tutte le probabilità outgoing da questo nodo
+                estimated_load = prob * demands[first_customer]
+
+                # Trova archi in uscita da questo cliente
+                outgoing_mask = src_nodes == first_customer
+                if outgoing_mask.any():
+                    outgoing_edges = outgoing_mask.nonzero(as_tuple=True)[0]
+                    for out_edge_idx in outgoing_edges:
+                        next_node = dst_nodes[out_edge_idx]
+                        if next_node != 0 and next_node != first_customer:
+                            # Aggiungi domanda pesata dalla probabilità
+                            estimated_load += edge_probs[out_edge_idx] * demands[next_node]
+
+                # Penalizza se supera la capacità (soft penalty)
+                violation = F.relu(estimated_load - cap)
+                penalty += violation ** 2
+
+        # Normalizza
+        num_depot_edges = depot_mask.sum()
+        if num_depot_edges > 0:
+            penalty = penalty / num_depot_edges.float()
+>>>>>>> da9e947741d8d0bc14e1cfcdba3ee165a3296d8f
 
         return penalty
 
