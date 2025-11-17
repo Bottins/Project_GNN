@@ -1,0 +1,107 @@
+GNN_CVRP_PROJECT/
+│
+├── 📁 data/
+│   ├── 📁 raw/                    # Dataset originali
+│   │   ├── 📁 train/
+│   │   ├── 📁 val/
+│   │   └── 📁 test/
+│   │
+│   ├── 📁 processed/              # Dataset preprocessati per GNN
+│   │   ├── train_graphs.pkl
+│   │   ├── val_graphs.pkl
+│   │   └── test_graphs.pkl
+│   │
+│   └── 📁 instances/              # Istanze CVRP generate
+│       ├── 📁 vrp_files/         # File .vrp
+│       ├── 📁 solutions/         # File .sol
+│       └── 📁 parameters/        # File .par
+│
+├── 📁 models/
+│   ├── 📁 architectures/         # Architetture GNN
+│   │   ├── __init__.py
+│   │   ├── gnn_base.py          # Modello GNN base
+│   │   ├── attention_gnn.py     # GNN con attention
+│   │   └── hybrid_gnn.py        # Modelli ibridi
+│   │
+│   ├── 📁 checkpoints/           # Modelli salvati
+│   │   ├── best_model.pth
+│   │   └── checkpoint_epoch_*.pth
+│   │
+│   └── 📁 configs/               # Configurazioni modelli
+│       ├── base_config.yaml
+│       └── experiment_configs/
+│
+├── 📁 src/
+│   ├── __init__.py
+│   │
+│   ├── 📁 data_generation/       # Generazione dataset
+│   │   ├── __init__.py
+│   │   ├── cvrp_generator.py    # Generatore istanze CVRP
+│   │   ├── graph_builder.py     # Conversione in grafi
+│   │   └── data_loader.py       # DataLoader per PyTorch
+│   │
+│   ├── 📁 solvers/               # Solutori
+│   │   ├── __init__.py
+│   │   ├── lkh_solver.py        # Wrapper per LKH-3
+│   │   ├── heuristic_solver.py  # Euristiche classiche
+│   │   └── gnn_solver.py        # Solver basato su GNN
+│   │
+│   ├── 📁 training/              # Training pipeline
+│   │   ├── __init__.py
+│   │   ├── trainer.py           # Training loop
+│   │   ├── losses.py            # Funzioni di loss
+│   │   └── metrics.py           # Metriche di valutazione
+│   │
+│   ├── 📁 utils/                 # Utility functions
+│   │   ├── __init__.py
+│   │   ├── file_io.py          # Lettura/scrittura file
+│   │   ├── graph_utils.py      # Utility per grafi
+│   │   └── visualization.py    # Visualizzazione risultati
+│   │
+│   └── 📁 evaluation/            # Valutazione modelli
+│       ├── __init__.py
+│       ├── evaluator.py        # Valutazione performance
+│       └── benchmarks.py       # Confronto con baseline
+│
+├── 📁 experiments/
+│   ├── 📁 logs/                  # Log degli esperimenti
+│   │   └── tensorboard/
+│   │
+│   ├── 📁 results/               # Risultati esperimenti
+│   │   ├── 📁 plots/            # Grafici e visualizzazioni
+│   │   ├── 📁 tables/           # Tabelle risultati
+│   │   └── 📁 solutions/        # Soluzioni trovate
+│   │
+│   └── 📁 configs/               # Configurazioni esperimenti
+│       ├── exp_001.yaml
+│       └── exp_002.yaml
+│
+├── 📁 notebooks/                  # Jupyter notebooks
+│   ├── 01_data_exploration.ipynb
+│   ├── 02_visualization.ipynb
+│   ├── 03_model_analysis.ipynb
+│   └── 04_results_comparison.ipynb
+│
+├── 📁 scripts/                    # Script eseguibili
+│   ├── prepare_dataset.py       # Prepara dataset completo
+│   ├── train_model.py          # Training del modello
+│   ├── evaluate.py             # Valutazione
+│   └── visualize_solution.py   # Visualizza soluzioni
+│
+├── 📁 external/                   # Software esterni
+│   └── 📁 LKH-3/                # LKH-3 executable
+│       └── LKH-3.exe
+│
+├── 📁 tests/                      # Unit tests
+│   ├── test_data_generation.py
+│   ├── test_models.py
+│   └── test_solvers.py
+│
+├── 📁 docs/                       # Documentazione
+│   ├── README.md
+│   ├── INSTALL.md
+│   └── API.md
+│
+├── requirements.txt              # Dipendenze Python
+├── setup.py                      # Setup del package
+└── README.md

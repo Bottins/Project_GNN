@@ -1,0 +1,32 @@
+NAME : 31.5849.tour
+COMMENT : Length = 5849
+COMMENT : Found by LKH-3 [Keld Helsgaun] Thu Nov 13 13:31:47 2025
+TYPE : TOUR
+DIMENSION : 24
+TOUR_SECTION
+1
+6
+11
+5
+12
+22
+3
+13
+8
+7
+24
+9
+16
+2
+19
+20
+15
+4
+23
+17
+14
+21
+18
+10
+-1
+EOF

@@ -1,0 +1,16 @@
+{
+  "num_nodes": 20,
+  "capacity": 25,
+  "coord_range": [
+    0,
+    1
+  ],
+  "demand_range": [
+    1,
+    8
+  ],
+  "scale": 1000.0,
+  "distribution": "uniform",
+  "depot_position": "center",
+  "seed": 42
+}

@@ -1,0 +1,6 @@
+PROBLEM_FILE = C:\Users\alexq\Desktop\GNN_CVRP_PROJECT\data\instances\vrp_files\train_62.vrp
+RUNS = 5
+TIME_LIMIT = 10
+TOUR_FILE = C:\Users\alexq\Desktop\GNN_CVRP_PROJECT\data\instances\solutions\train_62.sol
+SEED = 42
+TRACE_LEVEL = 0

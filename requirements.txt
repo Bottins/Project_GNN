@@ -1,0 +1,20 @@
+name: GNN_PHD
+channels:
+  - conda-forge
+  - pytorch
+  - nvidia
+  - defaults
+dependencies:
+  - python=3.10
+  - spyder-kernels=3.0
+  - pytorch>=1.7.0
+  - scipy>=1.5.2
+  - scikit-learn
+  - numpy>=1.19
+  - pip
+  - pip:
+      - ortools>=9.4
+      - entmax>=1.1
+      - matplotlib
+      - seaborn
+#pip install torch torch-geometric tqdm networkx scipy
