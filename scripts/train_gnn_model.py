@@ -357,22 +357,23 @@ def main():
         optimizer, mode='min', patience=5, factor=0.5
     )
 
-    # Loss con Focal Loss e penalità VRP migliorata
-    # FOCUS: Forzare il modello a predire probabilità più alte e tour validi dal deposito
+    # Loss BILANCIATA: Edge classification + penalità molto leggere
+    # FOCUS: Evitare di sopprimere le predizioni, usare Focal Loss come driver principale
     loss_fn = CVRPLoss(
-        edge_weight=1.0,
-        node_weight=0.3,
-        # Penalità VRP di base
-        self_loop_penalty=0.5,
-        node_revisit_penalty=0.3,
-        capacity_penalty=0.8,
-        route_validity_penalty=0.2,
-        # Penalità per archi vuoti - aumentata
-        empty_edge_penalty=1.5,
-        # Penalità per tour deposito - CRITICA per forzare tour validi
-        depot_tour_penalty=2.0,
-        # Penalità per probabilità basse - forza prob > 0.7 su archi GT
-        low_prob_penalty=1.0,
+        edge_weight=3.0,  # AUMENTATO - edge loss è la più importante
+        node_weight=0.1,  # Ridotto - meno importante
+        # Penalità VRP MOLTO ridotte per non sopprimere predizioni
+        self_loop_penalty=0.1,
+        node_revisit_penalty=0.1,
+        capacity_penalty=0.2,
+        route_validity_penalty=0.1,
+        # Penalità leggere per guidare senza dominare
+        empty_edge_penalty=0.3,
+        depot_tour_penalty=0.2,
+        # Penalità progressiva per probabilità (0.5 → 0.75)
+        low_prob_penalty=0.3,
+        low_prob_target_start=0.5,
+        low_prob_target_end=0.75,
         # Focal Loss per sbilanciamento
         use_focal_loss=True,
         focal_alpha=0.25,
@@ -381,10 +382,12 @@ def main():
         penalty_warmup_epochs=20
     )
 
-    print("\n🎯 Loss Function: Edge-Based con penalità deposito e probabilità alte")
-    print(f"   - Depot tour penalty: 2.0 (forza tour dal/al deposito)")
-    print(f"   - Low prob penalty: 1.0 (forza prob > 0.7 su archi GT)")
-    print(f"   - Empty edge penalty: 1.5 (evita predizioni sparse)")
+    print("\n🎯 Loss Function: Focal Loss + Penalità Leggere BILANCIATE")
+    print(f"   - Edge weight: 3.0 (principale driver)")
+    print(f"   - Low prob penalty: 0.3 (target progressivo 0.5→0.75)")
+    print(f"   - Depot tour penalty: 0.2 (guida leggera)")
+    print(f"   - Empty edge penalty: 0.3 (guida leggera)")
+    print(f"   - Altre penalità: 0.1-0.2 (molto leggere)")
     
     # Crea trainer
     trainer = CVRPTrainer(
