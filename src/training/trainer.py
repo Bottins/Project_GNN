@@ -23,13 +23,17 @@ class CVRPLoss(nn.Module):
     def __init__(self,
                  edge_weight: float = 1.0,
                  node_weight: float = 0.3,
-                 # Penalità MOLTO ridotte per non sopprimere le predizioni
+                 # Penalità ridotte per non sopprimere le predizioni
                  self_loop_penalty: float = 0.5,
                  node_revisit_penalty: float = 0.3,
                  capacity_penalty: float = 0.8,
                  route_validity_penalty: float = 0.2,
-                 # Penalità per archi vuoti - NUOVO
-                 empty_edge_penalty: float = 1.0,
+                 # Penalità per archi vuoti
+                 empty_edge_penalty: float = 1.5,
+                 # Penalità per tour che non partono/tornano dal deposito - NUOVO
+                 depot_tour_penalty: float = 2.0,
+                 # Penalità per probabilità basse - NUOVO
+                 low_prob_penalty: float = 1.0,
                  # Focal loss parameters
                  use_focal_loss: bool = True,
                  focal_alpha: float = 0.25,
@@ -44,6 +48,8 @@ class CVRPLoss(nn.Module):
         self.capacity_penalty = capacity_penalty
         self.route_validity_penalty = route_validity_penalty
         self.empty_edge_penalty = empty_edge_penalty
+        self.depot_tour_penalty = depot_tour_penalty
+        self.low_prob_penalty = low_prob_penalty
 
         self.use_focal_loss = use_focal_loss
         self.focal_alpha = focal_alpha
@@ -165,6 +171,25 @@ class CVRPLoss(nn.Module):
                 data.num_nodes
             )
             losses['empty_edge_loss'] = empty_edge_loss * self.empty_edge_penalty * penalty_scale
+
+        # 6. Depot tour penalty - NUOVO: penalizza tour che non partono/tornano dal deposito
+        if 'edge_predictions' in predictions:
+            depot_idx = data.depot_idx if hasattr(data, 'depot_idx') else 0
+            depot_tour_loss = self._depot_tour_penalty(
+                predictions['edge_predictions'],
+                data.edge_index,
+                data.num_nodes,
+                depot_idx
+            )
+            losses['depot_tour_loss'] = depot_tour_loss * self.depot_tour_penalty * penalty_scale
+
+        # 7. Low probability penalty - NUOVO: penalizza quando le probabilità sono troppo basse sugli archi GT
+        if 'edge_predictions' in predictions and hasattr(data, 'y_edges'):
+            low_prob_loss = self._low_probability_penalty(
+                predictions['edge_predictions'],
+                data.y_edges
+            )
+            losses['low_prob_loss'] = low_prob_loss * self.low_prob_penalty * penalty_scale
 
         # Loss totale
         losses['total_loss'] = sum(losses.values())
@@ -463,6 +488,97 @@ class CVRPLoss(nn.Module):
         # Normalizza per numero di nodi
         return penalty / max(num_nodes - 1, 1)
 
+    def _depot_tour_penalty(self, edge_preds, edge_index, num_nodes, depot_idx=0):
+        """
+        Penalizza tour che non partono e tornano dal deposito.
+
+        In un CVRP valido:
+        - Ogni tour deve partire dal deposito
+        - Ogni tour deve tornare al deposito
+        - Ogni cliente deve essere raggiungibile dal deposito con probabilità alta
+        - Ogni cliente deve poter tornare al deposito con probabilità alta
+        """
+        edge_probs = torch.sigmoid(edge_preds)
+        penalty = torch.tensor(0.0, device=edge_preds.device)
+
+        # 1. Per ogni nodo non-depot, verifica che ci sia un percorso dal/al deposito
+        # Approssimazione: controlla che ci sia almeno un arco con prob alta dal depot a ogni nodo
+        # e almeno un arco con prob alta da ogni nodo al depot
+
+        for node in range(num_nodes):
+            if node == depot_idx:
+                continue
+
+            # Verifica archi dal deposito a questo nodo (diretti o indiretti)
+            # Controlla archi diretti depot -> node
+            from_depot_mask = (edge_index[0] == depot_idx) & (edge_index[1] == node)
+            if from_depot_mask.any():
+                from_depot_prob = edge_probs[from_depot_mask].max()
+                # Vogliamo che la prob sia almeno 0.5 per archi critici
+                penalty += F.relu(0.5 - from_depot_prob) ** 2
+
+            # Verifica archi da questo nodo al deposito
+            to_depot_mask = (edge_index[0] == node) & (edge_index[1] == depot_idx)
+            if to_depot_mask.any():
+                to_depot_prob = edge_probs[to_depot_mask].max()
+                penalty += F.relu(0.5 - to_depot_prob) ** 2
+
+        # 2. Bilancia globale: somma archi in uscita dal depot ≈ somma archi in entrata al depot
+        depot_out_mask = edge_index[0] == depot_idx
+        depot_in_mask = edge_index[1] == depot_idx
+
+        if depot_out_mask.any() and depot_in_mask.any():
+            depot_out_sum = edge_probs[depot_out_mask].sum()
+            depot_in_sum = edge_probs[depot_in_mask].sum()
+
+            # Devono essere bilanciati
+            imbalance = torch.abs(depot_out_sum - depot_in_sum)
+            penalty += imbalance ** 2
+
+        # 3. Verifica che ci siano abbastanza archi dal depot (almeno uno per tour)
+        # In un CVRP con N clienti, servono almeno ceil(total_demand / capacity) tour
+        # Approssimazione: almeno 2-3 archi dal depot devono avere prob > 0.5
+        if depot_out_mask.any():
+            high_prob_from_depot = (edge_probs[depot_out_mask] > 0.5).sum().float()
+            # Vogliamo almeno 2 tour
+            min_tours = 2.0
+            if high_prob_from_depot < min_tours:
+                penalty += (min_tours - high_prob_from_depot) ** 2
+
+        # Normalizza per numero di nodi
+        return penalty / max(num_nodes - 1, 1)
+
+    def _low_probability_penalty(self, edge_preds, y_edges):
+        """
+        Penalizza quando le probabilità sono troppo basse sugli archi ground truth.
+
+        Questo forza il modello a predire probabilità più alte (>0.7) sugli archi
+        che dovrebbero essere nella soluzione.
+        """
+        edge_probs = torch.sigmoid(edge_preds)
+
+        # Trova gli archi che dovrebbero essere nella soluzione
+        positive_mask = y_edges == 1.0
+
+        if not positive_mask.any():
+            return torch.tensor(0.0, device=edge_preds.device)
+
+        # Prendi le probabilità degli archi positivi
+        positive_probs = edge_probs[positive_mask]
+
+        # Vogliamo che queste probabilità siano almeno 0.7
+        target_prob = 0.7
+        low_prob_mask = positive_probs < target_prob
+
+        if low_prob_mask.any():
+            # Penalizza la differenza
+            prob_deficit = target_prob - positive_probs[low_prob_mask]
+            penalty = (prob_deficit ** 2).mean()
+        else:
+            penalty = torch.tensor(0.0, device=edge_preds.device)
+
+        return penalty
+
 
 class CVRPTrainer:
     """Trainer per modelli CVRP GNN"""
@@ -654,7 +770,10 @@ class CVRPTrainer:
         
         for epoch in range(1, epochs + 1):
             start_time = time.time()
-            
+
+            # Aggiorna epoca nella loss function (per warmup penalità)
+            self.loss_fn.set_epoch(epoch)
+
             # Training
             train_stats = self.train_epoch(train_loader)
             

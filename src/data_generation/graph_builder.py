@@ -90,6 +90,7 @@ class CVRPGraphBuilder:
         data.num_nodes = instance.num_nodes + 1  # Include depot
         data.capacity = instance.capacity
         data.instance_id = str(instance.id)
+        data.depot_idx = 0  # Il deposito è sempre il nodo 0
         
         # Aggiungi solution come label se disponibile
         if solution is not None:
