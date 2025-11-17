@@ -28,6 +28,8 @@ class CVRPLoss(nn.Module):
                  node_revisit_penalty: float = 0.3,
                  capacity_penalty: float = 0.8,
                  route_validity_penalty: float = 0.2,
+                 # Penalità per archi vuoti - NUOVO
+                 empty_edge_penalty: float = 1.0,
                  # Focal loss parameters
                  use_focal_loss: bool = True,
                  focal_alpha: float = 0.25,
@@ -41,6 +43,7 @@ class CVRPLoss(nn.Module):
         self.node_revisit_penalty = node_revisit_penalty
         self.capacity_penalty = capacity_penalty
         self.route_validity_penalty = route_validity_penalty
+        self.empty_edge_penalty = empty_edge_penalty
 
         self.use_focal_loss = use_focal_loss
         self.focal_alpha = focal_alpha
@@ -154,6 +157,15 @@ class CVRPLoss(nn.Module):
             )
             losses['route_validity_loss'] = route_validity_loss * self.route_validity_penalty * penalty_scale
 
+        # 5. Empty edge penalty - NUOVO: penalizza quando il modello predice troppi pochi archi
+        if 'edge_predictions' in predictions:
+            empty_edge_loss = self._empty_edge_penalty(
+                predictions['edge_predictions'],
+                data.edge_index,
+                data.num_nodes
+            )
+            losses['empty_edge_loss'] = empty_edge_loss * self.empty_edge_penalty * penalty_scale
+
         # Loss totale
         losses['total_loss'] = sum(losses.values())
 
@@ -248,13 +260,7 @@ class CVRPLoss(nn.Module):
         Versione migliorata della capacity penalty.
         Penalizza quando la somma delle domande lungo archi con alta probabilità supera la capacità.
 
-<<<<<<< HEAD
         Approccio semplificato e vettorizzato per gestire batch correttamente.
-=======
-        Strategia:
-        - Per ogni arco dal depot, calcola il carico cumulativo pesato dalle probabilità
-        - Penalizza quando supera la capacità
->>>>>>> da9e947741d8d0bc14e1cfcdba3ee165a3296d8f
         """
         if capacity is None:
             return torch.tensor(0.0, device=edge_preds.device)
@@ -264,7 +270,6 @@ class CVRPLoss(nn.Module):
         # Estrai demands (assumendo indice 2 in node_features)
         demands = node_features[:, 2]
 
-<<<<<<< HEAD
         # Per ogni arco, calcola una stima del "peso" trasportato
         # Peso = probabilità dell'arco * demand del nodo di destinazione
         src_nodes = edge_index[0]
@@ -311,59 +316,6 @@ class CVRPLoss(nn.Module):
             # Normalizza per numero di clienti
             if len(unique_customers) > 0:
                 penalty = penalty / len(unique_customers)
-=======
-        # Converti capacity in tensor
-        if isinstance(capacity, torch.Tensor):
-            cap = capacity.float()
-        else:
-            cap = torch.tensor(capacity, dtype=torch.float32, device=edge_preds.device)
-
-        penalty = torch.tensor(0.0, device=edge_preds.device)
-
-        # Per ogni arco, calcola la domanda del nodo di destinazione pesata dalla probabilità
-        # e penalizza se la somma delle domande "attive" supera la capacità
-        src_nodes = edge_index[0]
-        dst_nodes = edge_index[1]
-
-        # Trova archi che partono dal depot (nodo 0)
-        depot_mask = src_nodes == 0
-
-        if depot_mask.any():
-            # Per ogni route dal depot, stimiamo il carico
-            depot_edges = depot_mask.nonzero(as_tuple=True)[0]
-
-            for edge_idx in depot_edges:
-                first_customer = dst_nodes[edge_idx]
-                if first_customer == 0:  # Skip self-loop to depot
-                    continue
-
-                # Stima il carico totale della route partendo da questo arco
-                # Approssimazione: somma pesata delle domande dei nodi raggiungibili
-                prob = edge_probs[edge_idx]
-
-                # Calcola carico stimato come probabilità * demand del nodo raggiunto
-                # Più soft: usiamo tutte le probabilità outgoing da questo nodo
-                estimated_load = prob * demands[first_customer]
-
-                # Trova archi in uscita da questo cliente
-                outgoing_mask = src_nodes == first_customer
-                if outgoing_mask.any():
-                    outgoing_edges = outgoing_mask.nonzero(as_tuple=True)[0]
-                    for out_edge_idx in outgoing_edges:
-                        next_node = dst_nodes[out_edge_idx]
-                        if next_node != 0 and next_node != first_customer:
-                            # Aggiungi domanda pesata dalla probabilità
-                            estimated_load += edge_probs[out_edge_idx] * demands[next_node]
-
-                # Penalizza se supera la capacità (soft penalty)
-                violation = F.relu(estimated_load - cap)
-                penalty += violation ** 2
-
-        # Normalizza
-        num_depot_edges = depot_mask.sum()
-        if num_depot_edges > 0:
-            penalty = penalty / num_depot_edges.float()
->>>>>>> da9e947741d8d0bc14e1cfcdba3ee165a3296d8f
 
         return penalty
 
@@ -456,6 +408,59 @@ class CVRPLoss(nn.Module):
             # Penalizza differenza (dovrebbero essere uguali)
             penalty += (depot_out_sum - depot_in_sum) ** 2
 
+        return penalty / max(num_nodes - 1, 1)
+
+    def _empty_edge_penalty(self, edge_preds, edge_index, num_nodes):
+        """
+        Penalizza quando il modello predice troppi pochi archi (predizioni "vuote").
+
+        In un CVRP valido, ogni cliente deve essere visitato, quindi:
+        - Ogni nodo non-depot deve avere almeno un arco in entrata con probabilità decente
+        - Ogni nodo non-depot deve avere almeno un arco in uscita con probabilità decente
+        - Il numero totale di archi attivi deve essere almeno (num_nodes - 1) per visitare tutti
+        """
+        edge_probs = torch.sigmoid(edge_preds)
+        penalty = torch.tensor(0.0, device=edge_preds.device)
+
+        # Threshold per considerare un arco "attivo"
+        active_threshold = 0.3
+
+        # 1. Ogni nodo non-depot deve avere almeno un arco in entrata
+        for node in range(1, num_nodes):  # Salta il depot (nodo 0)
+            # Archi in entrata
+            incoming_mask = edge_index[1] == node
+            if incoming_mask.any():
+                incoming_probs = edge_probs[incoming_mask]
+                max_incoming = incoming_probs.max()
+                # Penalizza se nessun arco in entrata ha probabilità alta
+                # Vogliamo che almeno un arco abbia prob > active_threshold
+                penalty += F.relu(active_threshold - max_incoming) ** 2
+            else:
+                # Nessun arco in entrata - penalità massima
+                penalty += active_threshold ** 2
+
+            # Archi in uscita
+            outgoing_mask = edge_index[0] == node
+            if outgoing_mask.any():
+                outgoing_probs = edge_probs[outgoing_mask]
+                max_outgoing = outgoing_probs.max()
+                # Penalizza se nessun arco in uscita ha probabilità alta
+                penalty += F.relu(active_threshold - max_outgoing) ** 2
+            else:
+                # Nessun arco in uscita - penalità massima
+                penalty += active_threshold ** 2
+
+        # 2. Controlla che ci sia un numero minimo di archi attivi globalmente
+        # In un tour che visita N nodi, servono almeno N archi
+        num_active_edges = (edge_probs > active_threshold).sum().float()
+        min_required_edges = num_nodes  # Almeno un arco per nodo
+
+        if num_active_edges < min_required_edges:
+            # Penalizza la mancanza di archi
+            edge_deficit = min_required_edges - num_active_edges
+            penalty += edge_deficit ** 2
+
+        # Normalizza per numero di nodi
         return penalty / max(num_nodes - 1, 1)
 
 
