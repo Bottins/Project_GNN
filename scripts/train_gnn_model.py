@@ -8,7 +8,7 @@ Training completo con visualizzazione risultati.
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
-
+Base=str(Path(__file__).parent.parent)
 import torch
 import torch.nn as nn
 from torch_geometric.loader import DataLoader as GeometricDataLoader
@@ -277,7 +277,7 @@ def main():
     parser = argparse.ArgumentParser(description="Train GNN per CVRP")
     
     # Dataset
-    parser.add_argument('--data-dir', type=str, default=r'C:\Users\alexq\Desktop\GNN_CVRP_PROJECT\data',
+    parser.add_argument('--data-dir', type=str, default=(Base+'/data'),
                        help='Directory con i dati')
     parser.add_argument('--batch-size', type=int, default=16,
                        help='Batch size')
@@ -301,9 +301,9 @@ def main():
                        help='Early stopping patience')
     
     # Output
-    parser.add_argument('--checkpoint-dir', type=str, default=r'C:\Users\alexq\Desktop\GNN_CVRP_PROJECT\models\checkpoints',
+    parser.add_argument('--checkpoint-dir', type=str, default=(Base+'/models/checkpoints'),
                        help='Directory per checkpoints')
-    parser.add_argument('--results-dir', type=str, default=r'C:\Users\alexq\Desktop\GNN_CVRP_PROJECT\experiments\results',
+    parser.add_argument('--results-dir', type=str, default=(Base+'/experiments/results'),
                        help='Directory per risultati')
     
     args = parser.parse_args()
