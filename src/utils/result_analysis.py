@@ -299,7 +299,7 @@ def analyze_single_instance(instance, lkh_solution, gnn_predictions, output_dir)
         lkh_routes=lkh_solution['routes'],
         edge_probs=torch.sigmoid(gnn_predictions['edge_probs']),
         edge_index=gnn_predictions['edge_index'],
-        threshold=0.65,
+        threshold=0.6,
         save_path=output_dir / f"comparison_{instance.id}.png"
     )
     plt.close(fig1)

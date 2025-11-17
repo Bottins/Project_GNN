@@ -329,7 +329,7 @@ class CVRPLoss(nn.Module):
         demands = node_features[:, 2]  # shape: [num_nodes]
 
         # Per ogni arco con alta probabilità, calcola la domanda accumulata
-        # Approssimazione: per ogni arco (i,j) con prob alta, il veicolo trasporta demand[j]
+        # Approssimazione: per ogni arco (i,j) con prob alta, il veicolo porta demand[j]
         penalty = torch.tensor(0.0, device=edge_preds.device)
 
         # Trova depot (nodo 0, con is_depot=1)

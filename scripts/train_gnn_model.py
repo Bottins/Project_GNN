@@ -293,7 +293,7 @@ def main():
                        help='Dropout rate')
     
     # Training
-    parser.add_argument('--epochs', type=int, default=100,
+    parser.add_argument('--epochs', type=int, default=10,
                        help='Numero di epoche')
     parser.add_argument('--lr', type=float, default=0.001,
                        help='Learning rate')
